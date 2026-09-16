@@ -1,9 +1,224 @@
 {
   "name": "HeroRui",
   "description": "朱红与纸白。基于 Ant Design + HeroUI 的全新 Xboard 用户主题。",
-  "version": "1.0.0",
+  "version": "1.3.0",
   "images": "",
   "configs": [
-    {"label":"自定义页脚 HTML","placeholder":"可加入客服脚本或统计代码","field_name":"custom_html","field_type":"textarea","default_value":""}
+    {
+      "label": "面板类型",
+      "placeholder": "一般不用改",
+      "field_name": "panel_type",
+      "field_type": "select",
+      "select_options": {
+        "auto": "自动识别",
+        "xboard": "Xboard",
+        "v2board": "V2board"
+      },
+      "default_value": "auto"
+    },
+    {
+      "label": "面板地址",
+      "placeholder": "同域部署留空；分离部署填面板地址",
+      "field_name": "server_url",
+      "field_type": "input",
+      "default_value": ""
+    },
+    {
+      "label": "接口路径前缀",
+      "placeholder": "默认 /api/v1，反代填如 /proxy/api",
+      "field_name": "api_path",
+      "field_type": "input",
+      "default_value": ""
+    },
+    {
+      "label": "加密中间件-地址",
+      "placeholder": "如 https://enc.example.com",
+      "field_name": "middleware_url",
+      "field_type": "input",
+      "default_value": ""
+    },
+    {
+      "label": "加密中间件-密钥",
+      "placeholder": "与中间件 AES_KEY 一致",
+      "field_name": "middleware_key",
+      "field_type": "input",
+      "default_value": ""
+    },
+    {
+      "label": "加密中间件-入口前缀",
+      "placeholder": "默认 /assets/immutable",
+      "field_name": "middleware_path",
+      "field_type": "input",
+      "default_value": ""
+    },
+    {
+      "label": "加密中间件-伪装扩展名",
+      "placeholder": "默认 .js，不带后缀填 none",
+      "field_name": "middleware_ext",
+      "field_type": "input",
+      "default_value": ""
+    },
+    {
+      "label": "邀请链接域名",
+      "placeholder": "留空用当前域名",
+      "field_name": "invite_domain",
+      "field_type": "input",
+      "default_value": ""
+    },
+    {
+      "label": "每日签到",
+      "placeholder": "",
+      "field_name": "checkin_mode",
+      "field_type": "select",
+      "select_options": {
+        "auto": "开启（面板支持时显示）",
+        "off": "关闭"
+      },
+      "default_value": "auto"
+    },
+    {
+      "label": "邮箱链接登录",
+      "placeholder": "",
+      "field_name": "mail_link_login",
+      "field_type": "select",
+      "select_options": {
+        "show": "显示",
+        "hide": "隐藏"
+      },
+      "default_value": "show"
+    },
+    {
+      "label": "客户端-Windows",
+      "placeholder": "下载地址，留空不显示",
+      "field_name": "client_windows",
+      "field_type": "input",
+      "default_value": ""
+    },
+    {
+      "label": "客户端-macOS",
+      "placeholder": "下载地址，留空不显示",
+      "field_name": "client_macos",
+      "field_type": "input",
+      "default_value": ""
+    },
+    {
+      "label": "客户端-Android",
+      "placeholder": "下载地址，留空不显示",
+      "field_name": "client_android",
+      "field_type": "input",
+      "default_value": ""
+    },
+    {
+      "label": "客户端-iOS",
+      "placeholder": "下载地址，留空不显示",
+      "field_name": "client_ios",
+      "field_type": "input",
+      "default_value": ""
+    },
+    {
+      "label": "客户端-Linux",
+      "placeholder": "下载地址，留空不显示",
+      "field_name": "client_linux",
+      "field_type": "input",
+      "default_value": ""
+    },
+    {
+      "label": "客户端-OpenWrt",
+      "placeholder": "下载地址，留空不显示",
+      "field_name": "client_openwrt",
+      "field_type": "input",
+      "default_value": ""
+    },
+    {
+      "label": "客户端-TV",
+      "placeholder": "下载地址，留空不显示",
+      "field_name": "client_tv",
+      "field_type": "input",
+      "default_value": ""
+    },
+    {
+      "label": "客户端下载页说明",
+      "placeholder": "下载页顶部说明，可留空",
+      "field_name": "client_note",
+      "field_type": "textarea",
+      "default_value": ""
+    },
+    {
+      "label": "Telegram 频道",
+      "placeholder": "如 https://t.me/yourchannel；清空则不显示",
+      "field_name": "telegram_channel",
+      "field_type": "input",
+      "default_value": "https://t.me/jichangbiji"
+    },
+    {
+      "label": "Telegram 频道说明",
+      "placeholder": "一句话说明，可留空",
+      "field_name": "telegram_channel_note",
+      "field_type": "input",
+      "default_value": ""
+    },
+    {
+      "label": "帮助中心外链",
+      "placeholder": "如 https://help.example.com",
+      "field_name": "help_url",
+      "field_type": "input",
+      "default_value": ""
+    },
+    {
+      "label": "在线客服类型",
+      "placeholder": "",
+      "field_name": "customer_service_type",
+      "field_type": "select",
+      "select_options": {
+        "": "不启用",
+        "chatwoot": "Chatwoot",
+        "crisp": "Crisp",
+        "salesmartly": "SalesMartly",
+        "other": "其它（自定义嵌入代码）"
+      },
+      "default_value": ""
+    },
+    {
+      "label": "Chatwoot 地址",
+      "placeholder": "如 https://chat.example.com",
+      "field_name": "chatwoot_url",
+      "field_type": "input",
+      "default_value": ""
+    },
+    {
+      "label": "Chatwoot 网站令牌",
+      "placeholder": "收件箱 → 网站令牌",
+      "field_name": "chatwoot_token",
+      "field_type": "input",
+      "default_value": ""
+    },
+    {
+      "label": "Crisp Website ID",
+      "placeholder": "设置 → 网站设置 → Website ID",
+      "field_name": "crisp_website_id",
+      "field_type": "input",
+      "default_value": ""
+    },
+    {
+      "label": "SalesMartly 脚本地址",
+      "placeholder": "安装代码里那条完整 URL",
+      "field_name": "salesmartly_url",
+      "field_type": "input",
+      "default_value": ""
+    },
+    {
+      "label": "自定义客服嵌入代码",
+      "placeholder": "粘贴客服 <script> 代码",
+      "field_name": "customer_service_html",
+      "field_type": "textarea",
+      "default_value": ""
+    },
+    {
+      "label": "自定义页脚 HTML",
+      "placeholder": "统计代码或客服脚本",
+      "field_name": "custom_html",
+      "field_type": "textarea",
+      "default_value": ""
+    }
   ]
 }

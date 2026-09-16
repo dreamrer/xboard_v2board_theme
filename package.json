@@ -1,18 +1,21 @@
 {
   "name": "herorui-xboard-theme",
-  "version": "1.0.0",
+  "version": "1.3.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "vite build && node scripts/package.mjs",
-    "test": "npm run build && node tests/smoke.mjs && node tests/integrations.mjs",
-    "preview": "node tests/preview.mjs"
+    "test": "npm run build && node tests/smoke.mjs && node tests/integrations.mjs && node tests/features.mjs",
+    "preview": "node tests/preview.mjs",
+    "gen:config": "node scripts/gen-config.mjs"
   },
   "dependencies": {
     "@ant-design/icons": "6.3.4",
     "@heroui/react": "3.2.5",
     "@heroui/styles": "3.2.5",
+    "@noble/ciphers": "2.4.0",
+    "@noble/hashes": "2.4.0",
     "antd": "6.6.3",
     "dompurify": "3.4.15",
     "lucide-react": "1.45.0",

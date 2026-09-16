@@ -3,9 +3,17 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {deflateRawSync} from 'node:zlib';
+import {toConfigs,exposedNames} from './theme-fields.mjs';
+import {writeStandalone} from './standalone.mjs';
 const project=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),root=project;
 const config=JSON.parse(await readFile(path.join(project,'config.json'),'utf8')),output=path.join(root,'theme',config.name),dist=path.join(root,'dist');
 if(config.name!=='HeroRui')throw Error('Unexpected theme target');
+// config.json 必须与 theme-fields.mjs 一致。漂移了不会报错、只是站长在后台
+// 填的字段静默不生效 —— 所以在这里拦下，并提示怎么修。
+{
+ const expected=JSON.stringify(toConfigs()),actual=JSON.stringify(config.configs||[]);
+ if(expected!==actual)throw Error('config.json 的 configs 与 scripts/theme-fields.mjs 不一致，请运行 `npm run gen:config` 重新生成');
+}
 await mkdir(output,{recursive:true});await mkdir(dist,{recursive:true});
 const html=await readFile(path.join(project,'build/index.html'),'utf8');
 const assets=[...html.matchAll(/(?:src|href)="\.\/([^" ]+)"/g)].map(m=>m[1]);
@@ -18,19 +26,28 @@ ${styles}
 </head><body>
 @php
  $heroruiSettings = ['title' => $title, 'description' => $description, 'logo' => $logo, 'version' => $version, 'assets_path' => '/theme/' . $theme . '/assets'];
+ // Xboard 从 admin_setting 取、V2board 从 config('theme.X') 取，两边都是以
+ // field_name 为键的数组；没初始化过时可能是 null，所以先兜一层。
+ $heroruiConfig = is_array($theme_config ?? null) ? $theme_config : [];
+ $heroruiTheme = [
+${exposedNames().map(n=>`  '${n}' => $heroruiConfig['${n}'] ?? ''`).join(',\n')}
+ ];
 @endphp
-<script>window.routerBase = "/"; window.settings = @json($heroruiSettings);</script>
+<script>window.routerBase = "/"; window.settings = @json($heroruiSettings); window.themeConfig = @json($heroruiTheme);</script>
 <div id="root"></div>
 ${scripts}
-{!! $theme_config['custom_html'] ?? '' !!}
+{!! $heroruiConfig['custom_html'] ?? '' !!}
 </body></html>\n`;
 await cp(path.join(project,'build/assets'),path.join(output,'assets'),{recursive:true});
 await writeFile(path.join(output,'dashboard.blade.php'),blade);
 for(const name of ['config.json','README.md'])await cp(path.join(project,name),path.join(output,name));
 await cp(path.join(root,'LICENSE'),path.join(output,'LICENSE'));
+// 分离部署用的 index.html + config.js。同域部署下这两个文件闲置，
+// 面板只认 dashboard.blade.php，所以一个包两种部署方式通用。
+const standalone=await writeStandalone(project,output);
 // Only current build assets enter the archive; obsolete hashed files are excluded.
 async function list(dir,prefix=''){const result=[];for(const f of await readdir(dir,{withFileTypes:true})){if(f.isDirectory())result.push(...await list(path.join(dir,f.name),prefix+f.name+'/'));else result.push(prefix+f.name)}return result.sort()}
-const files=['config.json','dashboard.blade.php','README.md','LICENSE',...(await list(path.join(project,'build/assets'),'assets/'))];
+const files=['config.json','dashboard.blade.php','README.md','LICENSE',...standalone,...(await list(path.join(project,'build/assets'),'assets/'))];
 const crcTable=Array.from({length:256},(_,i)=>{for(let j=0;j<8;j++)i=(i&1)?0xedb88320^(i>>>1):i>>>1;return i>>>0});
 const crc32=data=>{let c=0xffffffff;for(const b of data)c=crcTable[(c^b)&255]^(c>>>8);return(c^0xffffffff)>>>0};
 const sha=data=>createHash('sha256').update(data).digest('hex');
