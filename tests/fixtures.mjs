@@ -36,3 +36,8 @@ export async function mockAPI(page, requests = []) {
 export async function authenticate(page) {
   await page.addInitScript(() => localStorage.setItem('VUE_NAIVE_ACCESS_TOKEN',JSON.stringify({value:'preview-token',time:Date.now(),expire:null})));
 }
+
+/** 在页面脚本执行前注入主题配置，等价于生产环境 blade 注入的 window.themeConfig */
+export async function setThemeConfig(page, config) {
+  await page.addInitScript(c => { window.themeConfig = c }, config);
+}
