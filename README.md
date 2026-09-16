@@ -6,12 +6,13 @@
 
 基于 **React + Ant Design + HeroUI** 的独立用户主题，同时支持 **Xboard** 与 **V2board**。
 
-[下载主题](https://github.com/dreamrer/xboard_v2board_theme/releases/latest/download/HeroRui.zip) · [版本发布](https://github.com/dreamrer/xboard_v2board_theme/releases) · [反馈问题](https://github.com/dreamrer/xboard_v2board_theme/issues)
+[下载主题](https://github.com/dreamrer/xboard_v2board_theme/releases/latest/download/HeroRui.zip) · [版本发布](https://github.com/dreamrer/xboard_v2board_theme/releases) · [反馈问题](https://github.com/dreamrer/xboard_v2board_theme/issues) · [Telegram 频道](https://t.me/jichangbiji)
 
 ![React](https://img.shields.io/badge/React-19-20232a?logo=react)
 ![Ant Design](https://img.shields.io/badge/Ant_Design-6-ce303b)
 ![HeroUI](https://img.shields.io/badge/HeroUI-3-ce303b)
 ![License](https://img.shields.io/badge/License-MIT-blue)
+[![Telegram](https://img.shields.io/badge/Telegram-%E9%A2%91%E9%81%93-26A5E4?logo=telegram&logoColor=white)](https://t.me/jichangbiji)
 
 </div>
 
@@ -134,7 +135,7 @@ rm /www/wwwroot/v2board/config/theme/HeroRui.php
 | 每日签到 | 这个功能的总开关。用哪套签到接口由「面板类型」决定 |
 | 客户端-Windows / macOS / Android / iOS / Linux / OpenWrt / TV | 各平台下载地址，留空则不显示该平台；七个全空则整个下载页和导航入口都不出现 |
 | 客户端下载页说明 | 显示在下载列表上方的一段文字，可留空 |
-| Telegram 频道 | 在总览和客户端下载页显示关注入口。**默认是本主题作者的频道，不想推广请清空这一项**，清空后入口完全不出现 |
+| Telegram 频道 | 在总览和客户端下载页显示关注入口，默认为 [@jichangbiji](https://t.me/jichangbiji)。**不想推广请清空这一项**，清空后入口完全不出现 |
 | Telegram 频道说明 | 入口下方的一句话说明，留空用默认文案 |
 | 帮助中心外链 | 填了会在下载页显示「查看教程」按钮 |
 | 邮箱链接登录 | 登录页是否显示该入口。需面板已开启 `login_with_mail_link_enable` |
@@ -322,6 +323,11 @@ docs/images/              README 页面预览
 config.json               主题标识及可配置字段（由 gen:config 生成）
 vite.config.js            前端构建配置
 ```
+
+## 交流与反馈
+
+- **Telegram 频道** —— [@jichangbiji](https://t.me/jichangbiji)：主题更新、节点与故障公告
+- **问题反馈** —— [GitHub Issues](https://github.com/dreamrer/xboard_v2board_theme/issues)
 
 ## 致谢与许可
 
