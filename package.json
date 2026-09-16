@@ -30,11 +30,11 @@
     "tailwindcss": "4.3.3",
     "vite": "8.3.0"
   },
-  "description": "A red-and-white Xboard user theme built with React, Ant Design and HeroUI",
+  "description": "同时支持 Xboard 与 V2board 的用户主题，基于 React + Ant Design + HeroUI",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Grandova/Xboar-HeroRui-Theme.git"
+    "url": "git+https://github.com/dreamrer/xboard_v2board_theme.git"
   },
   "engines": {
     "node": ">=22.12.0"

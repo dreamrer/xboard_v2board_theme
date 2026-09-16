@@ -163,7 +163,18 @@ rm /www/wwwroot/v2board/config/theme/HeroRui.php
 https://enc.example.com/assets/immutable/<加密 token>.js
 ```
 
-协议与 Aurora / EZ 主题逐字节一致（XChaCha20-Poly1305，明文为 `<时间戳>|<路径>`，长度补齐到 32 字节的倍数），**可以直接复用同一个中间件实例和同一把密钥**。
+协议细节（便于自建或复用已有的中间件）：
+
+```text
+明文    = <时间戳>|<路径>
+inner   = 版本(1 字节, 0x03) ‖ 明文长度(2 字节, 大端) ‖ 明文 ‖ 随机填充(补到 32 的倍数)
+nonce   = 24 字节随机数
+密钥    = SHA-256(配置里填的密钥)
+密文    = XChaCha20-Poly1305(inner, 密钥, nonce)      末尾自带 16 字节 tag
+token   = base64url-nopad(nonce ‖ 密文)
+```
+
+这是通用的路径加密中间件协议，**已有中间件实例和密钥可以直接复用**，不需要为本主题单独部署。
 
 两点取舍需要知道：
 
