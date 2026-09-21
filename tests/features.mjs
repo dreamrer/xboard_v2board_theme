@@ -68,13 +68,13 @@ const settle = async (requests, endpoint) => {
 const tile = page => page.locator('.checkin-tile');
 
 /**
- * 用纯静态服务器托管 theme/HeroRui/ —— 这正是分离部署的形态：
+ * 用纯静态服务器托管 theme/HeroRui-standalone/ —— 这正是分离部署的形态：
  * 没有 PHP、没有 Blade，只有 index.html + config.js + assets/。
  */
 const TYPES = {'.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json'};
 const staticServer = createServer(async (req, res) => {
   const rel = decodeURIComponent(req.url.split('?')[0]);
-  const file = join('theme/HeroRui', rel === '/' ? 'index.html' : rel);
+  const file = join('theme/HeroRui-standalone', rel === '/' ? 'index.html' : rel);
   try {
     const body = await readFileAsync(file);
     res.writeHead(200, {'Content-Type': TYPES[extname(file)] || 'application/octet-stream'});
@@ -243,19 +243,48 @@ await test('面板类型：指定 Xboard 时不回退到 v2board', async () => {
   await context.close();
 });
 
-await test('面板类型：指定 V2board 时跳过探测直接用 POST 契约', async () => {
+await test('面板类型：指定 V2board 时按 405 认定内置签到，走 POST 契约', async () => {
   const state = makeState();
   state.checkin.mode = 'v2board';
   const {context, page, requests, errors} = await openPage({state, theme: {panel_type: 'v2board'}});
   await goto(page, 'dashboard');
   await tile(page).waitFor();
-  // v2board 没有查状态的接口，明确指定后不该再浪费一个探测请求
-  assert.equal(requests.filter(r => r.endpoint === '/user/checkin' && r.method === 'GET').length, 0,
-    '指定 V2board 后不该发 GET 探测');
   await tile(page).click();
   await settle(requests, '/user/checkin');
   const posted = requests.find(r => r.endpoint === '/user/checkin' && r.method === 'POST');
   assert.equal(posted.body.type, '1');
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+await test('面板类型：指定 V2board 但面板没有签到接口（原版）时不留坏入口', async () => {
+  const state = makeState();
+  state.checkin.mode = 'off';
+  const {context, page, requests, errors} = await openPage({state, theme: {panel_type: 'v2board'}});
+  await goto(page, 'dashboard');
+  await settle(requests, '/user/checkin');
+  await page.waitForTimeout(300);
+  assert.equal(await tile(page).count(), 0, '原版 V2board 没有签到，入口不该出现');
+  assert.equal(requests.filter(r => r.endpoint === '/user/checkin' && r.method === 'POST').length, 0);
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+await test('签到：V2board 返回 data:false 时显示原因，不显示「已签到」', async () => {
+  const state = makeState();
+  state.checkin.mode = 'v2board';
+  state.checkin.checked_today = 1;
+  state.checkin.message = '没有可用订阅，无法签到';
+  const {context, page, requests, errors} = await openPage({state});
+  await goto(page, 'dashboard');
+  await tile(page).waitFor();
+  await tile(page).click();
+  await page.waitForFunction(() => document.querySelector('.checkin-tile')?.innerText.includes('不可签到'), null, {timeout: 10000});
+  const text = await tile(page).innerText();
+  assert.ok(await tile(page).isDisabled());
+  assert.ok(!text.includes('已签到'), '没签上就不能显示已签到：' + text);
+  assert.ok(text.includes('没有可用订阅'), '应把后端原因显示在入口上：' + text);
+  assert.ok(!(await tile(page).getAttribute('class')).includes('is-done'));
   assert.deepEqual(errors, []);
   await context.close();
 });
@@ -355,6 +384,26 @@ await test('邮箱链接登录：配置隐藏后按钮消失', async () => {
 const stubSdk = async (page, url, script) => {
   await page.route(url, route => route.fulfill({contentType: 'application/javascript', body: script}));
 };
+
+await test('在线客服：退出登录时重置 Chatwoot 会话（共用电脑不串号）', async () => {
+  const {context, page, errors} = await openPage({
+    theme: {customer_service_type: 'chatwoot', chatwoot_url: 'https://chat.example.invalid', chatwoot_token: 'TOKEN123'}
+  });
+  await stubSdk(page, 'https://chat.example.invalid/packs/js/sdk.js', `
+    window.__calls=[];
+    window.chatwootSDK={run:()=>{window.$chatwoot={setUser:()=>window.__calls.push(['setUser']),
+      setCustomAttributes:()=>window.__calls.push(['attrs']),reset:()=>window.__calls.push(['reset'])};
+      dispatchEvent(new Event('chatwoot:ready'));}};
+  `);
+  await goto(page, 'dashboard');
+  await page.waitForFunction(() => window.__calls?.some(c => c[0] === 'attrs'), null, {timeout: 15000});
+  await page.getByRole('button', {name: '账户菜单'}).click();
+  await page.getByText('退出登录').click();
+  await page.waitForFunction(() => location.hash.startsWith('#/login'), null, {timeout: 15000});
+  assert.ok(await page.evaluate(() => window.__calls.some(c => c[0] === 'reset')), '退出后必须 reset，否则下一个人能看到上一个人的对话');
+  assert.deepEqual(errors, []);
+  await context.close();
+});
 
 await test('在线客服：Chatwoot 传入站点令牌并同步用户属性', async () => {
   const {context, page, errors} = await openPage({
@@ -710,8 +759,10 @@ await test('签到：v2board 回「今天已签过」也要记下来，按钮不
   await goto(page, 'dashboard');
   await tile(page).waitFor();
   await tile(page).click();
-  await assert.doesNotReject(page.getByText('您今天已经签到过，请勿重复签到').waitFor());
-  await page.waitForFunction(() => document.querySelector('.checkin-tile')?.disabled === true, null, {timeout: 10000});
+  // 原因同时出现在提示和入口上
+  await assert.doesNotReject(page.locator('.ant-message').getByText('您今天已经签到过，请勿重复签到').waitFor());
+  await page.waitForFunction(() => document.querySelector('.checkin-tile')?.innerText.includes('您今天已经签到过'), null, {timeout: 10000});
+  assert.ok(await tile(page).isDisabled());
   assert.deepEqual(errors, []);
   await context.close();
 });
@@ -765,6 +816,138 @@ await test('富文本：知识库的 iframe 带 sandbox，挡住真域名下的�
   await context.close();
 });
 
+await test('富文本：二次解析才出现的 iframe（mXSS）同样带 sandbox', async () => {
+  const state = makeState();
+  // 第一次解析时 iframe 只是 <style> 里的文本，序列化再解析后才变成真元素
+  state.knowledgeBody = '<p>教程正文</p><form><math><mtext></form><form><mglyph><style></math><iframe src="https://evil.example.invalid/login"></iframe>';
+  const {context, page, errors} = await openPage({state});
+  await goto(page, 'knowledge');
+  await page.getByText('开始使用：导入订阅').click();
+  await page.getByText('教程正文').waitFor();
+  const frames = await page.$$eval('.ant-drawer iframe', list => list.map(f => f.getAttribute('sandbox')));
+  for (const sandbox of frames) assert.equal(sandbox, 'allow-scripts allow-presentation', '每个 iframe 都必须带 sandbox');
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+await test('富文本：放行客户端一键导入协议（sing-box / clash-meta），拒绝系统协议', async () => {
+  const state = makeState();
+  state.knowledgeBody = '<p>教程正文</p><a id="a1" href="sing-box://import-remote-profile?url=x">A</a><a id="a2" href="clash-meta://install-config?url=x">B</a>'
+    + '<a id="a3" href="ms-msdt:/id x">C</a><a id="a4" href="search-ms:query=x">D</a><a id="a5" href="javascript:alert(1)">E</a><a id="a6" href="/help">F</a>';
+  const {context, page, errors} = await openPage({state});
+  await goto(page, 'knowledge');
+  await page.getByText('开始使用：导入订阅').click();
+  await page.getByText('教程正文').waitFor();
+  const href = id => page.locator('.ant-drawer #' + id).getAttribute('href');
+  assert.equal(await href('a1'), 'sing-box://import-remote-profile?url=x');
+  assert.equal(await href('a2'), 'clash-meta://install-config?url=x');
+  for (const id of ['a3', 'a4', 'a5']) assert.equal(await href(id), null, id + ' 的危险协议必须剥掉');
+  assert.equal(await href('a6'), '/help');
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+await test('富文本：套餐描述为 null 时不显示文字 "null"', async () => {
+  const state = makeState();
+  state.plan.content = null;
+  const {context, page, errors} = await openPage({state});
+  await goto(page, 'plan/1');
+  await page.getByText('商品信息').waitFor();
+  assert.ok(!(await page.locator('.rich').first().innerText()).includes('null'));
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+await test('兼容：没有 AbortSignal.any / AbortSignal.timeout 的旧浏览器（iOS 16）照常加载', async () => {
+  const {context, page, errors} = await openPage();
+  await page.addInitScript(() => { delete AbortSignal.any; delete AbortSignal.timeout; });
+  await goto(page, 'dashboard');
+  await assert.doesNotReject(page.getByText('28.50', {exact: true}).waitFor());
+  assert.equal(await page.locator('.fatal-error').count(), 0);
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+await test('请求：V2board 的 422 显示 errors 里的原因，而不是英文的 "The given data was invalid."', async () => {
+  const {context, page, errors} = await openPage();
+  await page.route('**/api/v1/user/changePassword', route => route.fulfill({status: 422,
+    json: {message: 'The given data was invalid.', errors: {new_password: ['新密码至少 8 位']}}}));
+  await goto(page, 'profile');
+  await page.getByRole('textbox', {name: '旧密码'}).fill('old-password');
+  await page.getByRole('textbox', {name: '新密码'}).fill('new-password');
+  await page.getByRole('textbox', {name: '再次输入密码'}).fill('new-password');
+  await page.getByRole('button', {name: '保存'}).click();
+  await assert.doesNotReject(page.getByText('新密码至少 8 位').waitFor());
+  assert.equal(await page.getByText('The given data was invalid.').count(), 0);
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+await test('总览：V2board 签到把已用流量减成负数时按 0 显示', async () => {
+  const state = makeState();
+  state.user.u = -31457280; state.user.d = 0;
+  const {context, page, errors} = await openPage({state});
+  await goto(page, 'dashboard');
+  await page.locator('.usage-display').waitFor();
+  const text = await page.locator('.usage-card').innerText();
+  assert.ok(!text.includes('-'), '不该出现负数流量：' + text);
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+await test('总览：后台刷新失败不把整个面板换成错误页', async () => {
+  const {context, page, requests, state, errors} = await openPage();
+  await goto(page, 'dashboard');
+  await tile(page).waitFor();
+  state.fail['/user/info'] = {status: 500, message: '临时故障'};
+  state.fail['/user/getSubscribe'] = {status: 500, message: '临时故障'};
+  await tile(page).click();   // 签到成功后会 reload() 刷新 user / subscribe
+  for (let i = 0; i < 60 && requests.filter(r => r.endpoint === '/user/info').length < 2; i++) await page.waitForTimeout(100);
+  await page.waitForTimeout(300);
+  assert.equal(await page.locator('.fatal-error').count(), 0, '已有数据时一次刷新失败不该整页报错');
+  assert.ok(await page.locator('.usage-card').isVisible());
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+await test('总览：手机宽度下帮助卡片不被 Telegram 卡片挤窄', async () => {
+  const {context, page, errors} = await openPage({theme: {telegram_channel: 'https://t.me/example'}});
+  await page.setViewportSize({width: 390, height: 900});
+  await goto(page, 'dashboard');
+  await page.locator('.help-stack .tg-channel').waitFor();
+  const widths = await page.$$eval('.help-stack > .help-link', list => list.map(e => e.getBoundingClientRect().width));
+  for (const w of widths) assert.ok(w > 120, '帮助卡片太窄：' + widths.join(', '));
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+await test('购买：renew=0 的当前套餐仍可买重置流量包', async () => {
+  const state = makeState();
+  state.plan.renew = 0;
+  const {context, page, errors} = await openPage({state});
+  await goto(page, 'plan/1?period=reset_price');
+  const buy = page.locator('.checkout-summary .button').first();
+  await buy.waitFor();
+  assert.ok(await buy.isEnabled(), '两个面板都豁免重置流量包的续费检查');
+  // 换回普通周期就应该是「不可续费」
+  await page.locator('.period-option').first().click();
+  await assert.doesNotReject(page.getByText('不可续费').first().waitFor());
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+await test('购买：停售但允许续费的当前套餐，列表里不显示「已售罄」', async () => {
+  const state = makeState();
+  state.plan.sell = 0; state.plan.renew = 1;
+  const {context, page, errors} = await openPage({state});
+  await goto(page, 'plan');
+  const card = page.locator('.plan-card', {hasText: '探索者 Pro'});
+  await card.waitFor();
+  assert.ok(!(await card.innerText()).includes('已售罄'), '老用户续费不受停售影响');
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
 await test('文案插值：值里的 $ 不被当成替换模式', async () => {
   const state = makeState();
   // 插件回的 traffic 原样进 t()，其中的 $& / $` 会被 replaceAll 当成替换模式
@@ -799,7 +982,7 @@ await test('签到：非中文语种下的失败也能正确收起 / 禁用（�
   await goto(b.page, 'dashboard');
   await tile(b.page).waitFor();
   await tile(b.page).click();
-  await assert.doesNotReject(b.page.getByText('이미 출석했습니다').waitFor());
+  await assert.doesNotReject(b.page.locator('.ant-message').getByText('이미 출석했습니다').waitFor());
   await b.page.waitForFunction(() => document.querySelector('.checkin-tile')?.disabled === true, null, {timeout: 10000});
   await b.context.close();
 });
@@ -1105,8 +1288,9 @@ await test('兑换码：V2board 没有预览，直接兑换且字段名是 giftc
   assert.equal(await page.getByText('兑换记录').count(), 0);
   await page.getByRole('textbox', {name: '兑换码'}).fill('GIFT-2026');
   await page.getByRole('button', {name: '兑换', exact: true}).click();
-  await settle(requests, '/user/redeemgiftcard');
-  const sent = requests.find(r => r.endpoint === '/user/redeemgiftcard');
+  for (let i = 0; i < 60 && !requests.some(r => r.endpoint === '/user/redeemgiftcard' && r.method === 'POST'); i++) await page.waitForTimeout(100);
+  // 第一条是探测用的 GET（期望 405），兑换本身是 POST
+  const sent = requests.find(r => r.endpoint === '/user/redeemgiftcard' && r.method === 'POST');
   assert.equal(sent.body.giftcard, 'GIFT-2026', 'v2board 的字段名是 giftcard 不是 code');
   assert.equal(sent.body.code, undefined);
   await assert.doesNotReject(page.getByText('兑换成功').waitFor());
@@ -1185,21 +1369,51 @@ await test('兑换码：未知奖励字段原样显示，不静默丢弃', async
   await context.close();
 });
 
-await test('兑换码：探测失败（非 404）不把 Xboard 误判成 V2board', async () => {
+await test('兑换码：探测失败（非 404）不猜面板类型，给重试且能恢复', async () => {
   const state = makeState();
   state.fail['/user/gift-card/types'] = {status: 500, message: '服务暂时不可用'};
   const {context, page, requests} = await openPage({state});
   const warns = [];
   page.on('console', m => m.type() === 'warning' && warns.push(m.text()));
-  await giftTab(page);
-  // 500 / 超时 / 中间件配置错都是故障。一律当 v2board 会让 Xboard 站点掉进
-  // 「直接兑换」分支，而 /user/redeemgiftcard 在 Xboard 上不存在
-  await assert.doesNotReject(page.getByRole('button', {name: '查询'}).waitFor());
+  await goto(page, 'profile');
+  await page.getByRole('tab', {name: '兑换码'}).click();
+  // 500 / 超时 / 中间件配置错都是故障，猜哪边都可能猜错：当 v2board 会让 Xboard
+  // 站点掉进不存在的 /user/redeemgiftcard，当 Xboard 又会把故障永久锁死
+  await page.getByText('暂时无法获取兑换码功能，请稍后重试').waitFor();
   assert.ok(warns.some(w => w.includes('[兑换码] 面板探测失败')), '要留线索：' + JSON.stringify(warns));
+  assert.equal(requests.filter(r => r.endpoint === '/user/redeemgiftcard').length, 0);
+  delete state.fail['/user/gift-card/types'];
+  await page.getByRole('button', {name: '重试'}).click();
+  await assert.doesNotReject(page.getByRole('button', {name: '查询'}).waitFor());
+  await context.close();
+});
+
+await test('兑换码：原版 V2board（两个接口都 404）明确提示未开启', async () => {
+  const state = makeState();
+  state.giftcard.mode = 'absent';
+  const {context, page, requests, errors} = await openPage({state});
+  await goto(page, 'profile');
+  await page.getByRole('tab', {name: '兑换码'}).click();
+  await page.getByText('当前站点未开启兑换码功能').waitFor();
+  assert.equal(await page.getByRole('textbox', {name: '兑换码'}).count(), 0, '不该留一个永远报错的输入框');
+  assert.equal(requests.filter(r => r.endpoint === '/user/redeemgiftcard' && r.method === 'POST').length, 0);
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+await test('兑换码：邀请返利按比例显示，嵌套字段不显示成 [object Object]', async () => {
+  const state = makeState();
+  state.giftcard.preview = {...state.giftcard.preview, reward_preview: {balance: 100, invite_reward_rate: 0.2, random_rewards: [{balance: 1}]}};
+  const {context, page, errors} = await openPage({state});
+  await giftTab(page);
   await page.getByRole('textbox', {name: '兑换码'}).fill('GIFT-2026');
   await page.getByRole('button', {name: '查询'}).click();
-  await settle(requests, '/user/gift-card/check');
-  assert.equal(requests.filter(r => r.endpoint === '/user/redeemgiftcard').length, 0);
+  await page.locator('.reward-list').waitFor();
+  const text = await page.locator('.giftcard-preview').innerText();
+  assert.match(text, /20%/, '0.2 是比例，应显示 20%：' + text);
+  assert.ok(!text.includes('0.2%'));
+  assert.ok(!text.includes('[object Object]') && !text.includes('random_rewards'), text);
+  assert.deepEqual(errors, []);
   await context.close();
 });
 
@@ -1249,6 +1463,23 @@ await test('免登录链接：生成并复制，链接能直接登录', async ()
   await other.context.close();
 });
 
+await test('免登录链接：剪贴板被拒（Safari 在请求返回后不再算用户操作）时弹窗展示链接', async () => {
+  const {context, page, errors} = await openPage();
+  await page.addInitScript(() => {
+    const deny = () => Promise.reject(new DOMException('NotAllowedError', 'NotAllowedError'));
+    Object.defineProperty(navigator, 'clipboard', {value: {write: deny, writeText: deny}, configurable: true});
+    document.execCommand = () => false;
+  });
+  await goto(page, 'profile');
+  await page.getByRole('button', {name: '生成并复制'}).click();
+  const dialog = page.getByRole('dialog', {name: '免登录链接'});
+  await dialog.waitFor();
+  assert.equal(await dialog.getByRole('textbox').inputValue(), 'https://panel.example.invalid/#/login?verify=quick-code&redirect=dashboard');
+  assert.equal(await page.getByText('链接已复制，60 秒内有效').count(), 0, '没复制成功就不能说已复制');
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
 await test('免登录链接：后端没返回链接时给出提示而不是复制空串', async () => {
   const state = makeState();
   state.quickLoginUrl = null;
@@ -1263,17 +1494,28 @@ await test('免登录链接：后端没返回链接时给出提示而不是复�
 // ——— 分离部署 ———————————————————————————————————————————
 
 await test('分离部署：产物含纯静态 index.html 与 config.js', async () => {
-  const html = await readFileAsync('theme/HeroRui/index.html', 'utf8');
+  const html = await readFileAsync('theme/HeroRui-standalone/index.html', 'utf8');
   assert.match(html, /<script src="\.\/config\.js"><\/script>/, '要改成引用外部 config.js');
   assert.ok(!/\{\{|\{!!|@php|@json/.test(html), '静态版不能残留任何 Blade 语法：' + html.slice(0, 200));
   assert.match(html, /\.\/assets\//, '资源要用相对路径，否则换域名就 404');
-  // Blade 版仍在，同一个包两种部署方式通用
   const blade = await readFileAsync('theme/HeroRui/dashboard.blade.php', 'utf8');
   assert.match(blade, /@json\(\$heroruiTheme\)/);
 });
 
+await test('面板包不含 index.html / config.js（否则 /theme/HeroRui/index.html 能绕开后台配置）', async () => {
+  const panel = JSON.parse(await readFileAsync('dist/HeroRui.manifest.json', 'utf8'));
+  for (const f of ['index.html', 'config.js'])
+    assert.ok(!(f in panel.files), '面板包里不该有 ' + f + '：面板把整个包解压到公开的 public/theme/HeroRui/');
+  assert.ok('dashboard.blade.php' in panel.files);
+  const standalone = JSON.parse(await readFileAsync('dist/HeroRui-standalone.manifest.json', 'utf8'));
+  for (const f of ['index.html', 'config.js'])
+    assert.ok(f in standalone.files, '分离部署包缺 ' + f);
+  assert.ok(!('dashboard.blade.php' in standalone.files));
+  assert.ok(Object.keys(standalone.files).some(f => f.startsWith('assets/')), '分离部署包缺 assets');
+});
+
 await test('分离部署：config.js 覆盖全部配置字段（不会漏项静默失效）', async () => {
-  const cfg = await readFileAsync('theme/HeroRui/config.js', 'utf8');
+  const cfg = await readFileAsync('theme/HeroRui-standalone/config.js', 'utf8');
   for (const f of FIELDS) {
     assert.match(cfg, new RegExp(`^\\s*${f.name}:`, 'm'), `config.js 缺字段 ${f.name}`);
   }

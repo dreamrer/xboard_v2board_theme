@@ -1,5 +1,5 @@
 import {useEffect,useRef} from 'react';
-import {conf,bytes,date,money,loadScript,trimTrailingSlash} from './core';
+import {conf,bytes,date,money,loadScript,trimTrailingSlash,token} from './core';
 
 /**
  * 在线客服对接 —— Chatwoot / Crisp / SalesMartly / 自定义嵌入代码。
@@ -48,7 +48,8 @@ function throttle(ref,fn){
  * 不能把它们放进 effect 依赖：useResource 每次 reload() 都会给出一个新对象
  * （签到、续费、改通知开关都会触发），effect 一重跑就先执行 cleanup ——
  * 对 Crisp 来说那是 session:reset，等于把用户正在进行的客服会话直接清掉。
- * effect 只依赖身份（邮箱），数据更新走 ref。
+ * effect 只依赖身份（邮箱），数据更新走 ref —— user 本身也要走 ref：
+ * 余额这类字段会变，闭包里抓住的还是挂载时那一份。
  */
 function useLatest(value){
  const ref=useRef(value);
@@ -61,7 +62,7 @@ function useLatest(value){
 }
 
 function Chatwoot({user,subscribe,config}){
- const last=useRef(0),data=useLatest({subscribe,config});
+ const last=useRef(0),data=useLatest({user,subscribe,config});
  useEffect(()=>{
   const base=trimTrailingSlash(conf('chatwoot_url')),token=conf('chatwoot_token');
   if(!base||!token)return;
@@ -74,7 +75,7 @@ function Chatwoot({user,subscribe,config}){
    last.current=Date.now();
    try{window.$chatwoot.setUser(user.email,{email:user.email,name:user.email.split('@')[0]})}
    catch(e){console.warn('[Chatwoot] setUser 失败',e);return}
-   try{window.$chatwoot.setCustomAttributes(attributes(user,data.current.subscribe,data.current.config))}
+   try{window.$chatwoot.setCustomAttributes(attributes(data.current.user,data.current.subscribe,data.current.config))}
    catch(e){console.warn('[Chatwoot] 同步用户属性失败',e)}
   };
   const onOpened=throttle(last,sync);
@@ -92,13 +93,18 @@ function Chatwoot({user,subscribe,config}){
    window.chatwootSDK.run({websiteToken:token,baseUrl:base});
    window.__heroruiChatwoot=true;
   }).catch(e=>console.warn('[Chatwoot] SDK 加载失败',e));
-  return()=>{dead=true;removeEventListener('chatwoot:ready',sync);removeEventListener('chatwoot:opened',onOpened)};
+  return()=>{
+   dead=true;removeEventListener('chatwoot:ready',sync);removeEventListener('chatwoot:opened',onOpened);
+   // 退出登录 / 换号时清掉会话：SDK 把会话存在自己的 Cookie 里，不 reset 的话
+   // 共用电脑上下一个人在登录页就能接着看上一个人的客服对话
+   try{window.$chatwoot?.reset?.()}catch{}
+  };
  },[user?.email]);
  return null;
 }
 
 function Crisp({user,subscribe,config}){
- const last=useRef(0),data=useLatest({subscribe,config});
+ const last=useRef(0),data=useLatest({user,subscribe,config});
  useEffect(()=>{
   const id=conf('crisp_website_id');
   if(!id)return;
@@ -111,7 +117,7 @@ function Crisp({user,subscribe,config}){
     window.$crisp.push(['set','user:nickname',[user.email.split('@')[0]]]);
    }catch(e){console.warn('[Crisp] 设置用户失败',e);return}
    try{
-    const attrs=attributes(user,data.current.subscribe,data.current.config);
+    const attrs=attributes(data.current.user,data.current.subscribe,data.current.config);
     // Crisp 的 session:data 收 [[key, value], ...]
     window.$crisp.push(['set','session:data',[Object.entries(attrs).map(([k,v])=>[k,String(v)])]]);
    }catch(e){console.warn('[Crisp] 同步用户属性失败',e)}
@@ -142,7 +148,7 @@ function Crisp({user,subscribe,config}){
 }
 
 function SalesMartly({user,subscribe,config}){
- const last=useRef(0),data=useLatest({subscribe,config});
+ const last=useRef(0),data=useLatest({user,subscribe,config});
  useEffect(()=>{
   const src=String(conf('salesmartly_url')).trim();
   if(!src)return;
@@ -154,7 +160,7 @@ function SalesMartly({user,subscribe,config}){
    // user_id / user_name 是 setLoginInfo 的必填项
    const payload={user_id:user.email,user_name:user.email.split('@')[0],email:user.email};
    try{
-    const attrs=attributes(user,data.current.subscribe,data.current.config);
+    const attrs=attributes(data.current.user,data.current.subscribe,data.current.config);
     // 结构化字段 custom_fields_ext 要先在后台建字段拿 ID，这里走纯文本，客服照样看得到
     payload.description=Object.entries(attrs).map(([k,v])=>`${k}: ${v}`).join(' | ');
    }catch(e){console.warn('[SalesMartly] 同步用户属性失败',e)}
@@ -174,7 +180,13 @@ function SalesMartly({user,subscribe,config}){
   }).catch(e=>console.warn('[SalesMartly] SDK 加载失败',e));
   window.__heroruiSSSync=sync;
   window.__heroruiSSOpen=throttle(last,sync);
-  return()=>{dead=true;if(window.__heroruiSSSync===sync){delete window.__heroruiSSSync;delete window.__heroruiSSOpen}};
+  return()=>{
+   dead=true;if(window.__heroruiSSSync===sync){delete window.__heroruiSSSync;delete window.__heroruiSSOpen}
+   // SalesMartly 没有公开的「退出 / 重置访客」接口，挂件和会话会一直留在页面上，
+   // 下一个人在登录页就能接着上一个人的对话。退出登录时（logout() 已先删掉 token）
+   // 整页刷新一次把挂件卸干净 —— 登录页不加载客服，下一位登录后 setLoginInfo 换成新身份。
+   if(window.ssq&&!token())location.reload();
+  };
  },[user?.email]);
  return null;
 }

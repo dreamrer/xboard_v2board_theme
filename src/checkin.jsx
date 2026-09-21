@@ -20,8 +20,10 @@ import {panelType} from './panel';
  *   405 → 路由存在但不收 GET，即 v2board 那种只有 POST 的内置签到
  *   404 / 其它 → 没这功能，整张卡片不渲染（不给没装插件的站点留坏按钮）
  *
- * 站长在主题配置里明确选了面板，就按所选的契约直接走：选 v2board 连探测都不发
- * （省一个请求），选 Xboard 则探测失败就是没有、不再回退去猜 v2board。
+ * 站长在主题配置里明确选了面板，就按所选的契约解读探测结果：选 Xboard 则
+ * 405 不再回退去猜 v2board。选 v2board 也照样探测 —— 原版 V2board 根本没有
+ * 签到接口，跳过探测会留下一个每次点都报错、永远收不起来的入口；405 才说明
+ * 这个分支真的带了内置签到。
  * checkin_mode 只管这个功能的总开关。
  */
 
@@ -66,8 +68,6 @@ export function CheckinTile({email,onDone}){
 
  useEffect(()=>{
   if(!enabled){setMode('off');return}
-  // 明确选了 v2board：它没有查状态的接口，探测纯属浪费一个请求
-  if(panel==='v2board'){setMode('v2board');setState(s=>({...s,checkedToday:readMark(email)}));return}
   let active=true;
   (async()=>{
    try{
@@ -77,7 +77,7 @@ export function CheckinTile({email,onDone}){
     if(!active)return;
     // 405 = 路由在、但只收 POST，正是 v2board 内置签到的样子。
     // 站长指定了 Xboard 就不做这个回退，探不到就是没有。
-    if(panel==='auto'&&e.status===405){setMode('v2board');setState(s=>({...s,checkedToday:readMark(email)}));return}
+    if(panel!=='xboard'&&e.status===405){setMode('v2board');setState(s=>({...s,checkedToday:readMark(email)}));return}
     // 404 = 面板没这个功能，正常结果，安静收起。
     //
     // 其余（500 / 超时 / 中间件配置错）是故障。这里仍然收起入口 —— 状态没探到
@@ -99,13 +99,15 @@ export function CheckinTile({email,onDone}){
     // type=1 是普通签到；运气签到（type=2）需要用户输入数值，这里不涉及
     const r=await request('/user/checkin',{method:'POST',data:{type:1}});
     if(r.data===false){
-     // data:false 是业务性失败（今天已签过、订阅不可用）。不去匹配文案 ——
+     // data:false 是业务性失败（今天已签过、没有可用订阅）。不去匹配文案 ——
      // request() 会带上 Content-Language，两个面板都据此本地化，zh-TW 回的是
      // 「已經簽到」，日韩俄语更是完全不同，靠中文正则必然漏。
      // 处理方式与语言无关：本次会话内禁掉按钮（避免反复点出同一句提示），
-     // 但不写当天的本地标记 —— 万一原因是订阅不可用，刷新后还应该能再试。
-     message.warning(r.message||t('签到失败'));
-     setState(s=>({...s,checkedToday:true}));
+     // 并把后端给的原因原样显示在入口上，而不是显示「已签到」—— 没订阅的用户
+     // 根本没签上，绿色的「已签到」是在说谎。也不写当天的本地标记，刷新后还能再试。
+     const reason=String(r.message||t('签到失败'));
+     message.warning(reason);
+     setState(s=>({...s,reason}));
      return;
     }
     fails.current=0;

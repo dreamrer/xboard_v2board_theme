@@ -34,7 +34,10 @@ function Workspace({route,dark,setDark}){
   ...(availableClients().length?[['client','客户端下载']]:[]),
   ['knowledge','使用文档'],['ticket','我的工单']];
  useEffect(()=>setMenu(false),[route]);
- const error=user.error||config.error||subscribe.error;
+ // 只有「从没拿到过数据」才整页报错。签到、兑换、订单轮询之后都会后台刷新
+ // user / subscribe，这时一次网络抖动不该把整个面板换成错误页 —— 那会卸载
+ // 客服组件、清掉正在进行的对话。已有数据就继续用旧的，下次刷新自然恢复。
+ const error=[user,config,subscribe].find(r=>r.error&&!r.value)?.error;
  if(error)return <div className="fatal-error"><Alert type="error" title={error}/><Action onClick={()=>{reload();config.reload()}}>{t('重试')}</Action><button className="text-button" onClick={logout}>{t('返回登入')}</button></div>;
  if(!user.value||!config.value||!subscribe.value)return <div className="boot-screen"><span className="brand-icon">h.</span><Spin/><p>{t('加载中')}</p></div>;
  const screens={dashboard:<Dashboard/>,client:<Clients/>,plan:id?<PlanDetail key={id+search} id={id} query={query}/>:<Plans/>,order:id?<OrderDetail key={id} trade={id}/>:<Orders/>,node:<Nodes/>,traffic:<Traffic/>,invite:<Invite/>,profile:<Profile/>,knowledge:<Knowledge/>,ticket:<Tickets key={id||'list'} id={id}/>};

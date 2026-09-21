@@ -179,8 +179,11 @@ export function planSoldOut(plan) {
  * 等于把后端本来会接受的订单挡在前端 —— 用户点仪表盘的「续费」只会看到
  * 一个禁用的「已售罄」按钮，而重置流量包（reset_price）后端更是明确豁免容量检查。
  */
-export function planUnavailable(plan, user) {
+export function planUnavailable(plan, user, period) {
   const renewing = plan?.id != null && user?.plan_id != null && Number(user.plan_id) === Number(plan.id);
+  // 重置流量包两个面板都豁免 renew / sell / 容量检查（Xboard validateResetTrafficPurchase、
+  // V2board OrderController@save 各处的 period !== 'reset_price'），只要求是当前套餐
+  if (period === 'reset_price') return !renewing;
   // renew 缺失时不当作禁止续费 —— 与 sell 的取舍一致：不存在 ≠ 关闭
   if (renewing) return plan.renew != null && !Number(plan.renew) && plan.renew !== true;
   return planSoldOut(plan);
