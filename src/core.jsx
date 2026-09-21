@@ -1,4 +1,4 @@
-import React,{createContext,useContext,useEffect,useState,useCallback,useRef} from 'react';
+import React,{createContext,useContext,useEffect,useLayoutEffect,useMemo,useState,useCallback,useRef} from 'react';
 import {App as AntApp,Alert,Skeleton,Empty,Button as AntButton} from 'antd';
 import {Button,Card,Chip} from '@heroui/react';
 import DOMPurify from 'dompurify';
@@ -93,7 +93,15 @@ export async function request(endpoint,{method='GET',data,signal}={}){
  // 走加密中间件时打的是伪装成静态资源的地址，真实路径不出现在网络里。
  // 配置不全会在这里抛错而不是回退直连 —— 静默直连等于站长以为开了、实际裸奔。
  const encrypted=rewriteToMiddleware(url.href,root.href.replace(/\/$/,''));
- const timeout=AbortSignal.timeout(20000);const response=await fetch(encrypted||url,{method,headers,body,signal:signal?AbortSignal.any([signal,timeout]):timeout});
+ // 不用 AbortSignal.any / AbortSignal.timeout：前者 Safari 17.4、Chrome 116 才有，
+ // iOS 16 及更早的 iPhone 上每个请求都会直接抛 TypeError，登录后整站打不开。
+ const controller=new AbortController(),forward=()=>controller.abort();let timedOut=false;
+ const timer=setTimeout(()=>{timedOut=true;controller.abort()},20000);
+ if(signal){if(signal.aborted)controller.abort();else signal.addEventListener('abort',forward,{once:true})}
+ let response;
+ try{response=await fetch(encrypted||url,{method,headers,body,signal:controller.signal})}
+ catch(e){if(timedOut)throw fail('请求超时，请检查网络后重试。');throw e}
+ finally{clearTimeout(timer);signal?.removeEventListener('abort',forward)}
  // 登录态清理必须排在 JSON 解析之前：401 的响应体常常不是 JSON（nginx / CDN
  // 的拦截页、PHP fatal），解析先抛就永远走不到这里，过期 token 留在本地，
  // 页面卡在「重试」按钮上无限循环。
@@ -106,10 +114,13 @@ export async function request(endpoint,{method='GET',data,signal}={}){
   console.error('[中间件] 有请求返回 404。中间件对所有失败都回同一个伪装 404，如果整站接口都失败，可能的原因：\n  1. 密钥与中间件 .env 的 AES_KEY 不一致\n  2. 本机时钟与服务器相差超过中间件的 TIMESTAMP_WINDOW（默认 300 秒）\n  3. 入口前缀与中间件 PATH_PREFIX 不一致\n  4. 伪装扩展名不在中间件的剥离名单内\n（若只有个别功能 404，那更可能是面板本身没有该接口）\n  请求地址：'+encrypted);
  }
  let result;try{result=await response.json()}catch{throw Object.assign(fail('服务器返回了无效响应，请稍后重试。',response.status),{generic:true});}
- if(!response.ok || result.status==='fail'||result.status==='error'){
+ if(!response.ok || result?.status==='fail'||result?.status==='error'){
   // generic 标记「这条文案是我们自己凑的，后端没给原因」。调用方想换成
   // 更贴合场景的提示时需要区分：后端给了原因就该照原文显示，不能盖掉。
-  const reason=result.message||Object.values(result.errors||{}).flat().join('；');
+  // errors 优先：V2board（Laravel 8）校验失败时 message 固定是英文的
+  // "The given data was invalid."，真正的原因只在 errors 里
+  const detail=Object.values(result?.errors||{}).flat().filter(x=>typeof x==='string'&&x).join('；');
+  const reason=detail||result?.message;
   throw Object.assign(fail(reason||`请求失败 (${response.status})`,response.status),{generic:!reason});
  }
  return result;
@@ -142,28 +153,60 @@ export function Blank(){const t=useT();return <Empty image={Empty.PRESENTED_IMAG
  * 注意这与客服嵌入代码 / 自定义页脚 HTML 不同：那两个的功能本身就是注入
  * <script>，属于站长对自己站点的操作，走原始注入、不经过这里。
  */
-export function Rich({content='',rich=false}){
- const {run}=useAction(),t=useT();let html='';
- try{const rows=JSON.parse(content);if(Array.isArray(rows))return <ul className="features">{rows.map((r,i)=><li key={i} className={r.support===false?'muted':''}><span>{r.support===false?'−':'✓'}</span>{r.feature||r.name||r.text||r.value}</li>)}</ul>}catch{}
- // Preserve legacy knowledge copy/jump buttons without executing arbitrary inline JavaScript.
- const parsed=new DOMParser().parseFromString(marked.parse(String(content)),'text/html');
- for(const element of parsed.querySelectorAll('[onclick]')){const handler=element.getAttribute('onclick').trim();const jump=handler.match(/^(?:window\.)?jump\(\s*['"]?(\d+)['"]?\s*\)\s*;?$/),copy=handler.match(/^(?:window\.)?copy\(\s*(['"])([\s\S]*?)\1\s*\)\s*;?$/);if(jump)element.dataset.knowledgeId=jump[1];if(copy&&!copy[2].includes(copy[1]))element.dataset.copyText=copy[2];element.removeAttribute('onclick')}
- for(const a of parsed.querySelectorAll('a[target="_blank"]'))a.setAttribute('rel','noopener noreferrer');
- // 正文里写什么都覆盖不掉：净化前统一改写，DOMPurify 之后属性值原样保留
- for(const f of parsed.querySelectorAll('iframe')){f.setAttribute('sandbox','allow-scripts allow-presentation');f.setAttribute('referrerpolicy','no-referrer')}
- html=DOMPurify.sanitize(parsed.body.innerHTML,{
-  ADD_TAGS:rich?['iframe']:[],
+/**
+ * 两档各用一个独立的 DOMPurify 实例，钩子只挂在自己身上。
+ *
+ * sandbox / rel 必须在**净化后的最终节点**上设置（afterSanitizeAttributes 钩子），
+ * 而且结果以 DOM 片段直接挂进页面、不再序列化成字符串重新解析。
+ * 之前是净化前先给 iframe 加 sandbox，再把净化结果当 HTML 字符串塞进 innerHTML ——
+ * 每多解析一次，特制的正文就有机会让 iframe 只在后一次解析时才出现（mXSS），
+ * 那个 iframe 就一个 sandbox 都没有。
+ */
+function purifier(rich){
+ const p=DOMPurify(window);
+ p.addHook('afterSanitizeAttributes',node=>{
+  if(node.nodeName==='A'&&node.getAttribute('target')==='_blank')node.setAttribute('rel','noopener noreferrer');
   // sandbox 是必须的：放行 iframe 后，能写知识库正文的人（分权客服、被盗的
   // 管理员账号、上游分销面板的内容）就能在真实域名下放一个全宽的假登录框。
   // allow-scripts + allow-same-origin 一起给会让 sandbox 失效，所以只给脚本和全屏，
   // 播放器够用，取不到本站的 storage / Cookie，也弹不出顶层导航。
-  ADD_ATTR:rich?['target','allow','allowfullscreen','frameborder','scrolling','sandbox','referrerpolicy']:['target'],
+  // 正文里自带的 sandbox 在这里被整体覆盖，写什么都放宽不了。
+  if(rich&&node.nodeName==='IFRAME'){node.setAttribute('sandbox','allow-scripts allow-presentation');node.setAttribute('referrerpolicy','no-referrer')}
+ });
+ return p;
+}
+const purifiers={plain:purifier(false),rich:purifier(true)};
+/**
+ * 允许的链接协议。除了网页 / 邮件 / 电话，放行各代理客户端的一键导入协议 ——
+ * 教程里的「导入到 sing-box」「导入到 Clash Meta」按钮就靠这些。
+ * 其余带协议的值一律拒绝；不带协议的相对地址（后半段）照常放行。
+ *
+ * 带连字符的协议名（sing-box / clash-meta）只能逐个列在前面：想靠放宽后半段的
+ * 字符集去兜住它们，会连 ms-msdt: / search-ms: 这类能拉起系统程序的协议一起放行。
+ */
+const URI_SCHEMES='https?|mailto|tel|clash|clashx|clash-meta|clashmeta|mihomo|flclash|hiddify|sing-box|singbox|sn|sub|stash|surge|quantumult-x|shadowrocket|loon|v2rayng|v2rayn|nekobox|karing';
+const ALLOWED_URI=new RegExp('^(?:(?:'+URI_SCHEMES+'):|[^a-z]|[a-z+.\\-]+(?:[^a-z+.\\-:]|$))','i');
+function sanitize(content,rich){
+ // Preserve legacy knowledge copy/jump buttons without executing arbitrary inline JavaScript.
+ // 这一步只把 onclick 翻译成 data-*，和安全无关；安全相关的改写都在上面的钩子里。
+ const parsed=new DOMParser().parseFromString(marked.parse(content),'text/html');
+ for(const element of parsed.querySelectorAll('[onclick]')){const handler=element.getAttribute('onclick').trim();const jump=handler.match(/^(?:window\.)?jump\(\s*['"]?(\d+)['"]?\s*\)\s*;?$/),copy=handler.match(/^(?:window\.)?copy\(\s*(['"])([\s\S]*?)\1\s*\)\s*;?$/);if(jump)element.dataset.knowledgeId=jump[1];if(copy&&!copy[2].includes(copy[1]))element.dataset.copyText=copy[2];element.removeAttribute('onclick')}
+ return purifiers[rich?'rich':'plain'].sanitize(parsed.body.innerHTML,{
+  ADD_TAGS:rich?['iframe']:[],
+  ADD_ATTR:rich?['target','allow','allowfullscreen','frameborder','scrolling']:['target'],
   FORBID_TAGS:['style','form','input'],
-  // 注意 [^a-z+.\-:] 里的连字符必须转义：写成 [^a-z+.-:] 时 `.-:` 会被当成
-  // 字符范围（. 到 :），连字符本身就跑出了排除集，于是 ms-msdt: / search-ms:
-  // 这类带连字符的协议全被放行 —— DOMPurify 自己的默认值就是转义的。
-  ALLOWED_URI_REGEXP:/^(?:(?:https?|mailto|tel|clash|hiddify|sub|stash|surge|quantumult-x):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i});
- return <div className="rich" onClick={e=>{const copy=e.target.closest('[data-copy-text]');if(copy){e.preventDefault();run(()=>copyText(copy.dataset.copyText),t('复制成功'))}}} dangerouslySetInnerHTML={{__html:html}}/>;
+  ALLOWED_URI_REGEXP:ALLOWED_URI,
+  RETURN_DOM_FRAGMENT:true});
+}
+export function Rich({content,rich=false}){
+ const {run}=useAction(),t=useT(),ref=useRef(null);
+ // 面板对空描述返回 null（不是 undefined，默认参数兜不住），不处理就会显示成文字 "null"
+ const text=content==null?'':String(content);
+ let rows=null;try{const v=JSON.parse(text);if(Array.isArray(v))rows=v}catch{}
+ const fragment=useMemo(()=>rows?null:sanitize(text,rich),[text,rich]);
+ useLayoutEffect(()=>{if(ref.current&&fragment)ref.current.replaceChildren(fragment.cloneNode(true))},[fragment]);
+ if(rows)return <ul className="features">{rows.map((r,i)=><li key={i} className={r?.support===false?'muted':''}><span>{r?.support===false?'−':'✓'}</span>{r?.feature||r?.name||r?.text||r?.value}</li>)}</ul>;
+ return <div ref={ref} className="rich" onClick={e=>{const copy=e.target.closest('[data-copy-text]');if(copy){e.preventDefault();run(()=>copyText(copy.dataset.copyText),t('复制成功'))}}}/>;
 }
 /**
  * 加载外部脚本，同一个 src 只加载一次。

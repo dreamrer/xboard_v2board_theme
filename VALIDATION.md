@@ -1,5 +1,30 @@
 # HeroRui 验证记录
 
+## v1.3.1（全面审计修复）
+
+对整个主题做了一次全量审计（9 个审查角度，约 30 条候选逐条独立验证，多条在浏览器里对构建产物复现，或对照本地 Xboard / V2board 源码核实），确认成立 15 条，全部修复，**136 项检查全部通过**（32 + 5 + 99，新增 17 项回归）。
+
+**安全 / 功能不可用**
+
+- 知识库 iframe 的 sandbox 可被 mXSS 绕过：sandbox 原先在净化**前**设置，净化结果再以 HTML 字符串塞进 innerHTML，特制正文（`<form><math><mtext></form><form><mglyph><style></math><iframe …>`）能让 iframe 只在后一次解析时出现、不带任何 sandbox。现改为在 DOMPurify 的 `afterSanitizeAttributes` 钩子里给最终节点设置 sandbox，结果以 DOM 片段直接挂载，不再序列化重解析。两档各用独立的 DOMPurify 实例。
+- 请求用了 `AbortSignal.any` / `AbortSignal.timeout`，Safari 17.4、Chrome 116 以下没有，iOS 16 及更早的 iPhone 登录后整站打不开。改为手写 AbortController + 定时器，超时给出明确提示。
+- 免登录链接在 iOS / Safari 上复制失败：请求返回后再写剪贴板已不算用户操作。改为点击时立即调用 `clipboard.write`，把未落地的链接作为 Promise 交给 `ClipboardItem`；不支持时退回普通复制；仍失败则弹窗展示链接供再次点击复制，且不再误报"已复制"。
+- 面板包里带着分离部署的 `index.html` + `config.js`：面板把整个包解压到公开的 `public/theme/HeroRui/`，任何人访问 `/theme/HeroRui/index.html` 都能打开一个读默认配置的前端（中间件关闭、真实接口路径暴露、后台关掉的功能重新出现）。现拆成两个包：`HeroRui.zip`（面板）与 `HeroRui-standalone.zip`（分离部署），构建时先清空输出目录，并有测试钉住面板包不含这两个文件。
+- README 的 V2board 升级步骤"删除 `config/theme/HeroRui.php`"是错的：配置缓存存在时不生效，之后保存反而会把全部主题配置重置为默认值。改为"删旧目录再解压，然后在后台保存一次主题配置"，并明确警告不要删该文件。
+
+**特定场景出错**
+
+- V2board 校验失败时 `message` 固定是英文 "The given data was invalid."，原因只在 `errors` 里。现在 `errors` 优先。
+- 重置流量包被"不可续费"拦住：两个面板都豁免重置流量包的 renew / sell / 容量检查，`planUnavailable` 现在接收所选周期。套餐列表里"停售但允许续费"的当前套餐也不再显示"已售罄"。
+- 一次后台刷新失败就整页换成错误页（并卸载客服组件）。现在只有从未拿到过数据时才整页报错。
+- 手机上总览的帮助卡片被 Telegram 卡片挤到 52px 宽。现在频道卡片在手机上单独占一行。
+- 签到：指定 V2board 时不再跳过探测（原版 V2board 没有签到接口，会留一个永远报错的入口）；`data:false` 时在入口上显示后端原因，不再显示绿色的"已签到"。
+- 兑换码：新增第二步探测（`GET /user/redeemgiftcard` 405 = 有、404 = 没有），原版 V2board 显示"未开启"而不是一个永远报错的输入框；探测故障不再猜面板类型，改为给重试按钮。顺带修正邀请返利比例（0.2 显示为 20%）和嵌套奖励字段显示成 `[object Object]`。
+- `sing-box://`、`clash-meta://` 等带连字符的一键导入协议被上一轮收紧的 URI 正则误伤。改为显式列出客户端协议白名单，`ms-msdt:` / `search-ms:` 等仍然拒绝。
+- 套餐描述为 `null` 时显示文字 "null"。
+- V2board 签到把已用流量减成负数时，总览显示负数流量。现按 0 显示。
+- Chatwoot 退出登录后会话还在：现在卸载时调用 `$chatwoot.reset()`。SalesMartly 没有公开的重置接口，退出登录时整页刷新一次卸掉挂件。客服同步的用户数据（余额等）改为读最新值而不是挂载时的快照。
+
 ## v1.1.0（V2board 支持 + 功能扩展）
 
 本地环境：macOS、Node.js 26、Chrome、Vite 生产构建。

@@ -21,9 +21,13 @@ import {panelType} from './panel';
  *
  * 所以 Xboard 是「输码 → 看预览 → 确认兑换 → 查记录」，v2board 只能「输码 → 兑换」。
  *
- * 模式判定用 GET /user/gift-card/types 探测：它没有副作用、也不需要先有一个码
- * （拿 check 去探要先让用户输码）。200 → Xboard；其它 → 按 v2board 直接兑换。
- * 站长在主题配置里指定了面板类型就不探测。
+ * 模式判定分两步探测，都没有副作用、也不需要先有一个码：
+ *   GET /user/gift-card/types   200 → Xboard
+ *   GET /user/redeemgiftcard    405 → 路由在、只收 POST，即带兑换码的 v2board 分支
+ *                               404 → 这个面板根本没有兑换码（原版 V2board 就是这样）
+ * 站长指定了 Xboard 就跳过探测（核心自带、路由无条件注册）；指定 v2board 只做第二步。
+ * 探测遇到故障（5xx / 超时）不猜结果，给一个重试按钮 —— 猜错了的话，
+ * 用户对着有效的码只会看到一个不存在的端点回的 404。
  */
 
 /**
@@ -47,12 +51,13 @@ const REWARD_LABELS={
  plan_validity_days:['套餐时长',v=>v+' 天'],
  device_limit:['设备数',v=>v+' 台'],
  reset_package:['流量重置',()=>'包含'],
- invite_reward_rate:['邀请返利',v=>v+'%']
+ // GiftCardService 里是比例（默认 0.2，乘到余额上），不是百分数
+ invite_reward_rate:['邀请返利',v=>Math.round(Number(v)*1000)/10+'%']
 };
 
 function Rewards({rewards,planName,compact=false}){
  const t=useT();
- const rows=Object.entries(rewards||{}).filter(([k,v])=>v!=null&&v!==''&&v!==false&&k!=='plan_id');
+ const rows=Object.entries(rewards||{}).filter(([k,v])=>v!=null&&v!==''&&v!==false&&k!=='plan_id'&&typeof v!=='object');// random_rewards 等嵌套结构不是可展示的奖励
  if(planName)rows.unshift(['__plan',planName]);
  if(!rows.length)return null;
  return <ul className={'reward-list'+(compact?' is-compact':'')}>{rows.map(([k,v])=>{
@@ -65,28 +70,33 @@ function Rewards({rewards,planName,compact=false}){
 export function GiftCard(){
  const t=useT(),{reload}=useAccount(),{message}=AntApp.useApp(),{busy,run}=useAction();
  const forced=panelType();
- const [mode,setMode]=useState(forced==='auto'?null:forced);// null=探测中
+ const [mode,setMode]=useState(forced==='xboard'?'xboard':null);// null=探测中 / absent=面板没有 / error=探测故障
+ const [probe,reprobe]=useState(0);
  const [code,setCode]=useState(''),[preview,setPreview]=useState(null),[checking,setChecking]=useState(false);
  const [page,setPage]=useState(1),[revision,revise]=useState(0),[history,setHistory]=useState(null),[historyError,setHistoryError]=useState('');
 
  // 探测：types 无副作用，不需要码
  useEffect(()=>{
-  if(forced!=='auto')return;
+  if(forced==='xboard')return;
   let active=true;
-  request('/user/gift-card/types')
-   .then(()=>active&&setMode('xboard'))
-   .catch(e=>{
-    if(!active)return;
-    // 只有 404 才说明「这个面板没有礼品卡接口」。500 / 超时 / 中间件配置错
-    // 都是故障 —— 一律当成 v2board 会让 Xboard 站点掉进「直接兑换」分支，
-    // 而那个端点在 Xboard 上不存在，用户对着有效的码只能看到 404。
-    // 与 checkin.jsx 的探测采用同一标准。
-    if(e.status===404){setMode('v2board');return}
-    setMode('xboard');// 探不出来时按主流面板走，preview 失败会给出后端原因
-    console.warn('[兑换码] 面板探测失败，暂按 Xboard 契约处理：'+(e.message||e),e.status?'HTTP '+e.status:'');
-   });
+  const broken=e=>{
+   console.warn('[兑换码] 面板探测失败：'+(e.message||e),e.status?'HTTP '+e.status:'');
+   if(active)setMode('error');
+  };
+  const v2board=()=>request('/user/redeemgiftcard').then(
+   // 能 GET 通说明不是那个只收 POST 的路由，按有这个功能处理，让后端给原因
+   ()=>active&&setMode('v2board'),
+   e=>{if(!active)return;if(e.status===405)setMode('v2board');else if(e.status===404)setMode('absent');else broken(e)});
+  setMode(null);
+  if(forced==='v2board')v2board();
+  else request('/user/gift-card/types').then(()=>active&&setMode('xboard'),e=>{
+   if(!active)return;
+   // 只有 404 才说明「不是 Xboard」，再去看是不是带兑换码的 v2board。
+   // 500 / 超时 / 中间件配置错都是故障，不能拿来下结论（与 checkin.jsx 同一标准）
+   if(e.status===404)v2board();else broken(e);
+  });
   return()=>{active=false};
- },[forced]);
+ },[forced,probe]);
 
  // 兑换记录只有 Xboard 有。这个接口不走 success 包装，直接是 {data,pagination}
  useEffect(()=>{
@@ -126,6 +136,8 @@ export function GiftCard(){
  },t('兑换成功'));
 
  if(mode===null)return <Panel><p className="muted">{t('加载中')}</p></Panel>;
+ if(mode==='absent')return <Panel><p className="muted">{t('当前站点未开启兑换码功能')}</p></Panel>;
+ if(mode==='error')return <Panel><Alert type="warning" title={t('暂时无法获取兑换码功能，请稍后重试')} action={<Action variant="secondary" onClick={()=>reprobe(n=>n+1)}>{t('重试')}</Action>}/></Panel>;
 
  const canRedeem=mode==='v2board'||(preview?preview.can_redeem!==false:false);
  const columns=[

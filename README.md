@@ -37,17 +37,17 @@ Xboard 与 V2board 的 blade 变量完全同名，同一个包两种面板都能
 
 ### 分离部署（前端单独托管）
 
-把前端放到静态托管（Cloudflare Pages、Vercel、单独的 nginx 站点……），只让它跨域调面板接口。同一个 ZIP 兼容两种部署，解压后：
+把前端放到静态托管（Cloudflare Pages、Vercel、单独的 nginx 站点……），只让它跨域调面板接口。分离部署用**另一个包** **[HeroRui-standalone.zip](https://github.com/dreamrer/xboard_v2board_theme/releases/latest/download/HeroRui-standalone.zip)**，解压后：
 
 ```text
-index.html      ← 静态托管用这个（面板上传时闲置）
+index.html      ← 入口
 config.js       ← 手填配置，改完刷新即可，不用重新构建
-dashboard.blade.php  ← 面板上传时用这个（静态托管时闲置）
-config.json
 assets/
 ```
 
-1. 解压 ZIP 到静态站点根目录。
+> 两个包不要混用。面板会把主题包整个解压到公开目录 `public/theme/HeroRui/`，如果里面有 `index.html`，任何人访问 `/theme/HeroRui/index.html` 都能打开一个**不读后台配置**的前端（加密中间件是关的，真实接口路径会暴露）。所以 `HeroRui.zip` 里不带这两个文件。
+
+1. 解压 `HeroRui-standalone.zip` 到静态站点根目录。
 2. 编辑 `config.js`，**至少填 `server_url`**（面板地址）：
 
 ```js
@@ -66,7 +66,6 @@ window.settings = {
 
 **升级时先备份 `config.js`** —— 新包里带的是一份全新的默认配置，直接覆盖会抹掉你填的值。只替换 `index.html` 和 `assets/` 最省事。
 
-同域部署下 `config.js` 完全闲置，配置仍在后台主题管理里填。
 
 ### V2board 安装
 
@@ -78,11 +77,14 @@ unzip HeroRui.zip -d /www/wwwroot/v2board/public/theme/HeroRui
 
 然后在 **后台 → 系统配置 → 界面设置 → 前端主题** 选择 HeroRui 并保存。
 
-V2board 只在 `config/theme/HeroRui.php` 不存在时才按 `config.json` 初始化主题配置。**升级到带新配置项的版本后，需要删掉这个文件再刷新前台**，否则新配置项在后台不会出现（缺失的字段主题会按默认值处理，不会报错）：
+**升级：** 先删掉旧目录再解压，不要直接覆盖 —— 旧版本残留的文件不会被新包清掉（v1.3.0 的面板包里带了 `index.html` 和 `config.js`，覆盖解压后它们仍然留在公开目录里）：
 
 ```bash
-rm /www/wwwroot/v2board/config/theme/HeroRui.php
+rm -rf /www/wwwroot/v2board/public/theme/HeroRui
+unzip HeroRui.zip -d /www/wwwroot/v2board/public/theme/HeroRui
 ```
+
+升级后到 **后台 → 主题配置** 打开 HeroRui 点一次**保存**，新增的配置项就会写入（表单本身按新的 `config.json` 渲染，新字段会以默认值出现）。**不要删除 `config/theme/HeroRui.php`**：配置缓存存在时删它不会生效，之后再保存时反而会把全部主题配置重置为默认值（面板地址、中间件密钥、客服设置都会丢，中间件会悄悄关闭）。
 
 站点名称、描述和 Logo 沿用后台设置；主题配置支持自定义 HTML，可用于客服或统计脚本。原版主题可继续保留，必要时在后台切回。
 
@@ -249,15 +251,21 @@ npm run build
 
 ```text
 dist/
-├── HeroRui.zip             # 上传到 Xboard 后台的主题包
-├── HeroRui.sha256          # ZIP 的 SHA-256 校验值
-└── HeroRui.manifest.json   # 包内文件清单及校验值
+├── HeroRui.zip                        # 面板主题包（Xboard 上传 / V2board 解压）
+├── HeroRui-standalone.zip             # 分离部署包（静态托管）
+├── *.sha256                           # ZIP 的 SHA-256 校验值
+└── *.manifest.json                    # 包内文件清单及校验值
 
-theme/HeroRui/             # 主题展开文件
+theme/HeroRui/                         # 面板包展开文件
 ├── config.json
-├── dashboard.blade.php    # 面板上传时用
-├── index.html             # 分离部署时用
-├── config.js              # 分离部署配置（手填）
+├── dashboard.blade.php
+├── assets/
+├── README.md
+└── LICENSE
+
+theme/HeroRui-standalone/              # 分离部署包展开文件
+├── index.html
+├── config.js                          # 手填配置
 ├── assets/
 ├── README.md
 └── LICENSE
@@ -273,13 +281,13 @@ npx playwright install chromium
 npm test
 ```
 
-测试会构建生产版本，启动临时预览服务器，使用模拟 API 执行三组检查，共 **119 项**，全部通过：
+测试会构建生产版本，启动临时预览服务器，使用模拟 API 执行三组检查，共 **136 项**，全部通过：
 
 | 套件 | 项数 | 覆盖 |
 | --- | --- | --- |
 | `tests/smoke.mjs` | 32 | 认证、订阅、选购结算、支付、节点、工单、邀请、设置、移动布局、深浅色、多语言、错误重试 |
 | `tests/integrations.mjs` | 5 | Turnstile、reCAPTCHA v2 / v3、Stripe 卡 token、收银台跳转（模拟 SDK） |
-| `tests/features.mjs` | 82 | 两种面板的字段归一化、面板类型覆盖与形状不符提示、签到两种契约及探测回退、邮箱链接登录四种响应、四类在线客服注入与属性同步、接口前缀与其误填保护、加密中间件、分离部署、首次访问的语言与深浅色识别、兑换码双契约、登录设备两种结构、免登录链接、七端下载页、Telegram 频道 |
+| `tests/features.mjs` | 99 | 两种面板的字段归一化、面板类型覆盖与形状不符提示、签到两种契约及探测回退、邮箱链接登录四种响应、四类在线客服注入与属性同步、接口前缀与其误填保护、加密中间件、分离部署、首次访问的语言与深浅色识别、兑换码双契约、登录设备两种结构、免登录链接、七端下载页、Telegram 频道 |
 
 加密中间件那项会在测试里用同一套算法把请求 token **解密回原路径**，同时断言真实接口路径没有出现在任何一条网络请求里。结果位于 `dist/HeroRui-preview/`。
 

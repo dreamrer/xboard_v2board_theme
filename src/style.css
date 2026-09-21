@@ -118,4 +118,9 @@
 @media(max-width:600px){
 .tg-channel{gap:12px;padding:15px 16px}
 .tg-channel strong{font-size:14px}
+/* 手机上 help-stack 横排：频道卡片单独占一整行，否则三张挤一行，
+   「使用文档」「我的工单」会被压到一行一个字 */
+.help-stack{flex-wrap:wrap}
+.help-stack>.help-link{min-width:0}
+.help-stack>.tg-channel{flex:1 0 100%}
 }

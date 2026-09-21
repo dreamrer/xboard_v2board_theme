@@ -33,9 +33,13 @@ case '/guest/comm/config':data=state.guest;break;
 case '/user/comm/config':data=state.config;break;
 case '/user/getQuickLoginUrl':data=state.quickLoginUrl;break;
 case '/user/getActiveSession':data=state.sessions;break;
-// 礼品卡。giftcard.mode 决定探测 /user/gift-card/types 的结果：
-//   xboard → 200（走预览 + 记录）；v2board → 404（只能直接兑换 /user/redeemgiftcard）
+// 礼品卡。giftcard.mode 决定两步探测的结果：
+//   xboard → types 200（走预览 + 记录）
+//   v2board → types 404、GET redeemgiftcard 405（只能直接兑换 /user/redeemgiftcard）
+//   absent → 两个都 404（原版 V2board，没有兑换码）
+//   broken → types 500（面板故障）
 case '/user/gift-card/types':
+ if(state.giftcard.mode==='broken')return route.fulfill({status:500,json:{message:'Server Error'}});
  if(state.giftcard.mode!=='xboard')return route.fulfill({status:404,json:{message:'Not Found'}});
  data={types:{1:'通用礼品卡',2:'套餐礼品卡',3:'盲盒礼品卡'}};break;
 case '/user/gift-card/check':
@@ -45,6 +49,8 @@ case '/user/gift-card/redeem':
  if(body.code!==state.giftcard.code)return route.fulfill({status:400,json:{message:'礼品卡不存在或已过期'}});
  data=true;break;
 case '/user/redeemgiftcard':
+ if(state.giftcard.mode!=='v2board')return route.fulfill({status:404,json:{message:'Not Found'}});
+ if(req.method()==='GET')return route.fulfill({status:405,json:{message:'Method Not Allowed'}});
  // v2board 的字段名是 giftcard，不是 code
  if(body.giftcard!==state.giftcard.code)return route.fulfill({status:500,json:{message:'The gift card does not exist'}});
  data=true;break;
