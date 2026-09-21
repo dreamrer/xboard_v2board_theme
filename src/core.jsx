@@ -100,7 +100,16 @@ export async function request(endpoint,{method='GET',data,signal}={}){
  if(signal){if(signal.aborted)controller.abort();else signal.addEventListener('abort',forward,{once:true})}
  let response;
  try{response=await fetch(encrypted||url,{method,headers,body,signal:controller.signal})}
- catch(e){if(timedOut)throw fail('请求超时，请检查网络后重试。');throw e}
+ catch(e){
+  if(timedOut)throw Object.assign(fail('请求超时，请检查网络后重试。'),{network:true});
+  // 调用方自己取消的（切页面）原样抛出，useResource 靠 signal.aborted 忽略它
+  if(signal?.aborted)throw e;
+  // 其余都是连不上：断网、DNS、证书、跨域被拦、源站挂了（Cloudflare 522）。
+  // 浏览器给的只是一句 "Failed to fetch" / "Load failed"，用户看不懂，换成中文；
+  // 原始错误留在控制台给站长排查。
+  console.warn('[请求] 无法连接接口：'+(encrypted||url.href),e);
+  throw Object.assign(fail('无法连接到服务器，请检查网络后重试。'),{network:true});
+ }
  finally{clearTimeout(timer);signal?.removeEventListener('abort',forward)}
  // 登录态清理必须排在 JSON 解析之前：401 的响应体常常不是 JSON（nginx / CDN
  // 的拦截页、PHP fatal），解析先抛就永远走不到这里，过期 token 留在本地，
@@ -112,6 +121,12 @@ export async function request(endpoint,{method='GET',data,signal}={}){
  if(response.status===404&&encrypted&&!warnedDisguised404){
   warnedDisguised404=true;
   console.error('[中间件] 有请求返回 404。中间件对所有失败都回同一个伪装 404，如果整站接口都失败，可能的原因：\n  1. 密钥与中间件 .env 的 AES_KEY 不一致\n  2. 本机时钟与服务器相差超过中间件的 TIMESTAMP_WINDOW（默认 300 秒）\n  3. 入口前缀与中间件 PATH_PREFIX 不一致\n  4. 伪装扩展名不在中间件的剥离名单内\n（若只有个别功能 404，那更可能是面板本身没有该接口）\n  请求地址：'+encrypted);
+ }
+ // 网关错误：Cloudflare 52x（522 = 连不上源站）/ nginx 502–504。这时面板程序根本没收到
+ // 请求，响应体是网关自己的页面，没有可显示的原因 —— 与「连不上」同样处理
+ if([502,503,504].includes(response.status)||(response.status>=520&&response.status<=527)){
+  console.warn('[请求] 网关返回 '+response.status+'，面板源站可能不可达：'+(encrypted||url.href));
+  throw Object.assign(fail('服务器暂时无法连接，请稍后重试。（'+response.status+'）',response.status),{network:true});
  }
  let result;try{result=await response.json()}catch{throw Object.assign(fail('服务器返回了无效响应，请稍后重试。',response.status),{generic:true});}
  if(!response.ok || result?.status==='fail'||result?.status==='error'){
