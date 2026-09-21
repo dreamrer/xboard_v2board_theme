@@ -368,6 +368,37 @@ for (const [status, message, text] of [
   });
 }
 
+await test('登录页：连不上面板时说明原因并可重试，恢复后按钮可点', async () => {
+  const {context, page, errors} = await openPage({authed: false});
+  let down = true;
+  // 断网 / DNS / 跨域被拦时浏览器只给一句 "Failed to fetch"
+  await page.route('**/api/v1/guest/comm/config**', route => down ? route.abort('failed') : route.fallback());
+  await page.goto(base + '/#/login');
+  await page.reload();
+  await page.getByText('无法连接到面板，暂时不能登录').waitFor();
+  await page.getByText('无法连接到服务器，请检查网络后重试。').waitFor();
+  assert.equal(await page.getByText('Failed to fetch').count(), 0, '不该把浏览器英文原文丢给用户');
+  const login = page.locator('button[type="submit"]');
+  assert.ok(await login.isDisabled());
+  down = false;
+  await page.locator('.config-error').getByRole('button', {name: '重试'}).click();
+  await page.waitForFunction(() => !document.querySelector('.config-error'), null, {timeout: 10000});
+  assert.ok(await login.isEnabled(), '重试成功后登录按钮应可点');
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+await test('登录页：Cloudflare 522（源站连不上）同样给出中文说明', async () => {
+  const {context, page, errors} = await openPage({authed: false});
+  await page.route('**/api/v1/guest/comm/config**', route => route.fulfill({status: 522, contentType: 'text/html', body: '<html>522</html>'}));
+  await page.goto(base + '/#/login');
+  await page.reload();
+  await page.getByText('服务器暂时无法连接，请稍后重试。（522）').waitFor();
+  assert.ok(await page.locator('.config-error').getByRole('button', {name: '重试'}).isVisible());
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
 await test('邮箱链接登录：配置隐藏后按钮消失', async () => {
   const {context, page, errors} = await openPage({theme: {mail_link_login: 'hide'}, authed: false});
   await page.goto(base + '/#/login');
