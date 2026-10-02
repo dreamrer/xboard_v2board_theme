@@ -6,7 +6,7 @@
 
 基于 **React + Ant Design + HeroUI** 的独立用户主题，同时支持 **Xboard** 与 **V2board**。
 
-[下载主题](https://github.com/dreamrer/xboard_v2board_theme/releases/latest/download/HeroRui.zip) · [版本发布](https://github.com/dreamrer/xboard_v2board_theme/releases) · [反馈问题](https://github.com/dreamrer/xboard_v2board_theme/issues) · [Telegram 频道](https://t.me/jichangbiji)
+[下载主题](https://github.com/dreamrer/xboard_v2board_theme/releases/latest/download/HeroRui.zip) · [版本发布](https://github.com/dreamrer/xboard_v2board_theme/releases) · [反馈问题](https://github.com/dreamrer/xboard_v2board_theme/issues) · [配套客户端](https://github.com/dreamrer/Xboard-V2Board-Client) · [Telegram 频道](https://t.me/jichangbiji)
 
 ![React](https://img.shields.io/badge/React-19-20232a?logo=react)
 ![Ant Design](https://img.shields.io/badge/Ant_Design-6-ce303b)
@@ -25,6 +25,10 @@ HeroRui 使用朱红、纸白与暖灰，配合简洁字排、细线分隔与克
 本仓库只包含主题源码、构建脚本、测试和说明。前端独立实现，沿用 `/api/v1` 接口及主题加载格式，不加载原版 `umi.js`，不修改后端业务逻辑。
 
 Xboard 与 V2board 的 blade 变量完全同名，同一个包两种面板都能装。两者的接口字段差异（验证码、Telegram、节点在线状态、套餐售罄等）由 `src/panel.js` 兜底归一化，不需要选择面板类型 —— 也因此对补过接口的改版分支同样成立。
+
+## 配套客户端
+
+主题管网页端，App 端可以搭配 **[Apex — Xboard / V2Board 客户端](https://github.com/dreamrer/Xboard-V2Board-Client)**：Android、Android TV、Windows、macOS、Linux、OpenWrt 全平台，用户在 App 里登录、买套餐、选节点，五套界面可选，用你自己的名称和 Logo。出包在 Telegram 机器人 [@Apex_build_bot](https://t.me/Apex_build_bot) 里完成。
 
 ## 下载与安装
 
